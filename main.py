@@ -1,11 +1,12 @@
 # ! encoding:UTF-8
-import argparse
 import os
 import time
 
 import cv2
+import hydra
 import numpy as np
 import torch
+from omegaconf import DictConfig
 
 from src.models.DRL.actor import ResNet
 from src.utils import point2svg as ps
@@ -13,43 +14,26 @@ from src.utils import vectorize_utils as vu
 from src.utils.decode import Decode_np, del_file
 from src.utils.point2svg import Point2svg
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-parser = argparse.ArgumentParser(description="Learning to Paint")
-parser.add_argument("--max_step", default=40, type=int, help="max length for episode")
-parser.add_argument(
-    "--actor", default="./model/actor.pkl", type=str, help="Actor model"
-)
-parser.add_argument("--img", default="./image/Naruto.png", type=str, help="test image")
-parser.add_argument(
-    "--imgid", default=0, type=int, help="set begin number for generated image"
-)
-parser.add_argument(
-    "--divide",
-    default=32,
-    type=int,
-    help="divide the target image to get better resolution",
-)
-parser.add_argument("--width", default=128, type=int, help="width of each patch")
-parser.add_argument("--output_dir", default="./output/", type=str, help="output path")
-args = parser.parse_args()
+@hydra.main(config_path="conf", config_name="config", version_base=None)
+def main(cfg: DictConfig):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    patch_width = cfg.width
+    patch_divide = cfg.divide
+    output_dir = cfg.output_dir
+    patch_count = patch_divide * patch_divide
+    use_patch_fill = True
+    use_pruning_module = False
+    T = torch.ones([1, 1, patch_width, patch_width], dtype=torch.float32).to(device)
+    coord_tensor = vu.get_coord(width=patch_width, device=device)
+    os.makedirs(output_dir, exist_ok=True)
+    del_file(output_dir)
 
-patch_width = args.width
-patch_divide = args.divide
-output_dir = args.output_dir
-patch_count = patch_divide * patch_divide
-use_patch_fill = True
-use_pruning_module = False
-T = torch.ones([1, 1, patch_width, patch_width], dtype=torch.float32).to(device)
-coord_tensor = vu.get_coord(width=patch_width, device=device)
-del_file(output_dir)
-
-if __name__ == "__main__":
     actor = ResNet(5, 18, 9)
-    actor.load_state_dict(torch.load(args.actor))
+    actor.load_state_dict(torch.load(cfg.actor))
     actor = actor.to(device).eval()
 
-    input_img = cv2.imread(args.img, cv2.IMREAD_GRAYSCALE)
+    input_img = cv2.imread(cfg.img, cv2.IMREAD_GRAYSCALE)
     original_img = input_img
     (img_height, img_width) = input_img.shape
     origin_shape = (input_img.shape[1], input_img.shape[0])
@@ -88,7 +72,7 @@ if __name__ == "__main__":
     input_img_resized = cv2.resize(input_img, (patch_width, patch_width))
     input_img_resized = input_img_resized.reshape(1, patch_width, patch_width, 1)
     input_img_resized = np.transpose(input_img_resized, (0, 3, 1, 2))
-    input_img_tensor = torch.tensor(input_img_resized).to(device).float() / 255.0
+    # input_img_tensor = torch.tensor(input_img_resized).to(device).float() / 255.0
 
     os.system("mkdir output")
     p2s = Point2svg(
@@ -103,7 +87,7 @@ if __name__ == "__main__":
         patch_done_list=patch_status_list,
     )
 
-    action_list = []
+    # action_list = []
 
     with torch.no_grad():
         if patch_divide != 0:
@@ -121,16 +105,16 @@ if __name__ == "__main__":
             T = T.expand(patch_count, 1, patch_width, patch_width)
             vu.save_img(
                 canvas_tensor,
-                args.imgid,
+                cfg.imgid,
                 divide_number=patch_divide,
                 width=patch_width,
                 origin_shape=origin_shape,
                 divide=True,
             )
-            args.imgid += 1
+            imgid = cfg.imgid + 1
             start_time = time.time()
-            for step in range(args.max_step):
-                step_tensor = T * step / args.max_step
+            for step in range(cfg.max_step):
+                step_tensor = T * step / cfg.max_step
                 actions = actor(
                     torch.cat(
                         [canvas_tensor, patch_img_tensor, step_tensor, coord_tensor], 1
@@ -144,13 +128,13 @@ if __name__ == "__main__":
                 p2s.add_action_div(actions)
                 vu.save_img(
                     canvas_tensor,
-                    args.imgid,
+                    imgid,
                     divide_number=patch_divide,
                     width=patch_width,
                     origin_shape=origin_shape,
                     divide=True,
                 )
-                args.imgid += 1
+                imgid += 1
 
             end_time_actor = time.time()
             time_draw_action = p2s.draw_action_list_for_all_patch(path_or_circle="path")
@@ -164,3 +148,7 @@ if __name__ == "__main__":
             print(
                 f"paint time is : {end_time_total - end_time_actor - time_draw_action - (time_decode_end - time_decode_start)}"
             )
+
+
+if __name__ == "__main__":
+    main()

@@ -1,0 +1,8 @@
+# config.yaml for Hydra
+max_step: 40
+actor: ./model/actor.pkl
+img: ./image/Naruto.png
+imgid: 0
+divide: 32
+width: 128
+output_dir: ./output/
